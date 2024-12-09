@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import requests
-import geocoder
 from streamlit_folium import st_folium
 import folium
 
@@ -25,10 +24,6 @@ if "map" not in st.session_state:
     st.session_state["map"] = None
 if "facilities" not in st.session_state:
     st.session_state["facilities"] = pd.DataFrame()
-
-# Ensure the current location marker is persistent
-if "current_location_marker" not in st.session_state:
-    st.session_state["current_location_marker"] = None
 
 def fetch_healthcare_data(latitude, longitude, radius, care_type):
     url = f"https://api.geoapify.com/v2/places"
@@ -69,13 +64,6 @@ def get_lat_lon_from_query(query):
     st.error("Location not found. Please try again.")
     return None, None
 
-def get_current_location():
-    g = geocoder.ip('me')
-    if g.ok:
-        return g.latlng
-    st.error("Unable to detect current location.")
-    return [38.5449, -121.7405]
-
 st.title("Healthcare Facility Locator")
 
 # Add legend above the map
@@ -88,18 +76,10 @@ location_query = st.text_input("Search by Location:")
 radius = st.slider("Search Radius (meters):", min_value=500, max_value=200000, step=1000, value=20000)
 care_type = st.selectbox("Type of Care:", options=[""] + list(CARE_TYPES.keys()))
 
-use_current_location = st.button("Use Current Location", key="current_location_button")
 latitude = st.number_input("Latitude", value=38.5449)
 longitude = st.number_input("Longitude", value=-121.7405)
 
-if use_current_location:
-    current_location = get_current_location()
-    latitude = current_location[0]
-    longitude = current_location[1]
-    st.write(f"Using current location: Latitude {latitude}, Longitude {longitude}")
-    location_query = ""  # Clear the location query to avoid conflicts
-
-elif location_query:
+if location_query:
     lat, lon = get_lat_lon_from_query(location_query)
     if lat and lon:
         latitude = lat
