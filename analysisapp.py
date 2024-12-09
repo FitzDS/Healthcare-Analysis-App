@@ -26,45 +26,48 @@ if "map" not in st.session_state:
 if "facilities" not in st.session_state:
     st.session_state["facilities"] = pd.DataFrame()
 
-def fetch_healthcare_data_within_state(state_geojson, care_type):
-    """Fetch healthcare data within the selected state boundary."""
-    url = f"https://api.geoapify.com/v2/places"
-    params = {
-        "categories": care_type,
-        "filter": f"boundary.geojson:{state_geojson}",
-        "limit": 100,
-        "apiKey": GEOAPIFY_API_KEY,
-    }
-    response = requests.get(url, params=params)
-    if response.status_code == 200:
-        data = response.json()
-        facilities = []
-        for feature in data.get("features", []):
-            properties = feature.get("properties", {})
-            geometry = feature.get("geometry", {})
-            facility = {
-                "name": properties.get("name", "Unknown"),
-                "address": properties.get("formatted", "N/A"),
-                "latitude": geometry.get("coordinates", [])[1],
-                "longitude": geometry.get("coordinates", [])[0],
-            }
-            facilities.append(facility)
-        return pd.DataFrame(facilities)
-    else:
-        st.error(f"Error fetching data from Geoapify: {response.status_code}")
-        return pd.DataFrame()
+def fetch_healthcare_data_within_state_paginated(state_geojson, care_type):
+    """Fetch healthcare data within the selected state boundary using pagination."""
+    url = "https://api.geoapify.com/v2/places"
+    facilities = []
+    offset = 0
+    limit = 100  # Max results per request
 
-def get_lat_lon_from_query(query):
-    url = f"https://maps.googleapis.com/maps/api/geocode/json"
-    params = {"address": query, "key": GOOGLE_API_KEY}
-    response = requests.get(url, params=params)
-    if response.status_code == 200:
-        data = response.json()
-        if data["results"]:
-            location = data["results"][0]["geometry"]["location"]
-            return location["lat"], location["lng"]
-    st.error("Location not found. Please try again.")
-    return None, None
+    while True:
+        params = {
+            "categories": care_type,
+            "filter": f"boundary.geojson:{state_geojson}",
+            "limit": limit,
+            "offset": offset,
+            "apiKey": GEOAPIFY_API_KEY,
+        }
+        response = requests.get(url, params=params)
+        if response.status_code == 200:
+            data = response.json()
+            features = data.get("features", [])
+            if not features:
+                break  # Exit loop if no more results
+            for feature in features:
+                properties = feature.get("properties", {})
+                geometry = feature.get("geometry", {})
+                facility = {
+                    "name": properties.get("name", "Unknown"),
+                    "address": properties.get("formatted", "N/A"),
+                    "latitude": geometry.get("coordinates", [])[1],
+                    "longitude": geometry.get("coordinates", [])[0],
+                }
+                facilities.append(facility)
+            offset += limit  # Increment offset for next page
+        else:
+            st.error(f"Error fetching data from Geoapify: {response.status_code}")
+            break
+    return pd.DataFrame(facilities)
+
+def simplify_geojson(state_geojson, tolerance=0.01):
+    """Simplify GeoJSON geometry to reduce complexity."""
+    gdf = gpd.GeoDataFrame.from_features(state_geojson["features"])
+    gdf["geometry"] = gdf["geometry"].simplify(tolerance)
+    return gdf.to_json()
 
 def load_state_boundaries():
     """Load GeoJSON file with state boundaries."""
@@ -104,9 +107,10 @@ if st.button("Search", key="search_button"):
     if selected_state and selected_state.strip():
         try:
             state_geojson = state_boundaries[state_boundaries["NAME"] == selected_state].to_json()
+            state_geojson = simplify_geojson(state_geojson)  # Simplify the boundary
 
-            # Fetch facilities within the state boundary
-            facilities = fetch_healthcare_data_within_state(state_geojson, CARE_TYPES.get(care_type, "healthcare"))
+            # Fetch facilities within the state boundary using pagination
+            facilities = fetch_healthcare_data_within_state_paginated(state_geojson, CARE_TYPES.get(care_type, "healthcare"))
 
             # Add state boundary
             folium.GeoJson(
