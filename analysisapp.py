@@ -102,12 +102,12 @@ if st.button("Search", key="search_button"):
     st.write("Fetching data...")
     facilities = fetch_healthcare_data(latitude, longitude, radius, CARE_TYPES.get(care_type, "healthcare"))
 
+    m = folium.Map(location=[latitude, longitude], zoom_start=12)
+
     if facilities.empty:
         st.error("No facilities found. Check your API key, location, or radius.")
-        st.session_state["map"] = folium.Map(location=[latitude, longitude], zoom_start=12)
     else:
         st.write(f"Found {len(facilities)} facilities.")
-        m = folium.Map(location=[latitude, longitude], zoom_start=12)
         folium.Circle(
             location=[latitude, longitude],
             radius=radius,
@@ -129,12 +129,13 @@ if st.button("Search", key="search_button"):
             icon=folium.Icon(icon="info-sign", color="red")
         ).add_to(m)
 
-        # Add state boundary if selected
-        if selected_state:
+    # Add state boundary if selected
+    if selected_state and selected_state.strip():
+        try:
             state_geojson = state_boundaries[state_boundaries["NAME"] == selected_state].to_json()
             folium.GeoJson(
                 data=state_geojson,
-                name="State Boundary",
+                name=f"Boundary: {selected_state}",
                 style_function=lambda x: {
                     "fillColor": "#428bca",
                     "color": "#428bca",
@@ -142,8 +143,10 @@ if st.button("Search", key="search_button"):
                     "fillOpacity": 0.1,
                 },
             ).add_to(m)
+        except Exception as e:
+            st.error(f"Failed to add state boundary: {e}")
 
-        st.session_state["map"] = m
+    st.session_state["map"] = m
 
 if "map" in st.session_state and st.session_state["map"] is not None:
     st_folium(st.session_state["map"], width=700, height=500)
