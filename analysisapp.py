@@ -26,11 +26,12 @@ if "map" not in st.session_state:
 if "facilities" not in st.session_state:
     st.session_state["facilities"] = pd.DataFrame()
 
-def fetch_healthcare_data(latitude, longitude, radius, care_type):
+def fetch_healthcare_data_within_state(state_geojson, care_type):
+    """Fetch healthcare data within the selected state boundary."""
     url = f"https://api.geoapify.com/v2/places"
     params = {
         "categories": care_type,
-        "filter": f"circle:{longitude},{latitude},{radius}",
+        "filter": f"boundary.geojson:{state_geojson}",
         "limit": 100,
         "apiKey": GEOAPIFY_API_KEY,
     }
@@ -80,13 +81,12 @@ st.markdown(f"""### Legend
 """)
 
 location_query = st.text_input("Search by Location:")
-radius = st.slider("Search Radius (meters):", min_value=500, max_value=200000, step=1000, value=20000)
 care_type = st.selectbox("Type of Care:", options=[""] + list(CARE_TYPES.keys()))
 
 # Add state selection for boundary overlay
 state_boundaries = load_state_boundaries()
 states = state_boundaries["NAME"].tolist()
-selected_state = st.selectbox("Select a State for Boundary Overlay:", options=[""] + states)
+selected_state = st.selectbox("Select a State for Boundary Analysis:", options=[""] + states)
 
 latitude = st.number_input("Latitude", value=38.5449)
 longitude = st.number_input("Longitude", value=-121.7405)
@@ -99,40 +99,16 @@ if location_query:
         st.write(f"Using location: {location_query} (Latitude: {latitude}, Longitude: {longitude})")
 
 if st.button("Search", key="search_button"):
-    st.write("Fetching data...")
-    facilities = fetch_healthcare_data(latitude, longitude, radius, CARE_TYPES.get(care_type, "healthcare"))
+    m = folium.Map(location=[latitude, longitude], zoom_start=6 if selected_state else 12)
 
-    m = folium.Map(location=[latitude, longitude], zoom_start=12)
-
-    if facilities.empty:
-        st.error("No facilities found. Check your API key, location, or radius.")
-    else:
-        st.write(f"Found {len(facilities)} facilities.")
-        folium.Circle(
-            location=[latitude, longitude],
-            radius=radius,
-            color="blue",
-            fill=True,
-            fill_opacity=0.4
-        ).add_to(m)
-
-        for _, row in facilities.iterrows():
-            folium.Marker(
-                location=[row["latitude"], row["longitude"]],
-                popup=f"<b>{row['name']}</b><br>Address: {row['address']}",
-                icon=folium.Icon(color="blue")
-            ).add_to(m)
-
-        folium.Marker(
-            location=[latitude, longitude],
-            popup="Current Location",
-            icon=folium.Icon(icon="info-sign", color="red")
-        ).add_to(m)
-
-    # Add state boundary if selected
     if selected_state and selected_state.strip():
         try:
             state_geojson = state_boundaries[state_boundaries["NAME"] == selected_state].to_json()
+
+            # Fetch facilities within the state boundary
+            facilities = fetch_healthcare_data_within_state(state_geojson, CARE_TYPES.get(care_type, "healthcare"))
+
+            # Add state boundary
             folium.GeoJson(
                 data=state_geojson,
                 name=f"Boundary: {selected_state}",
@@ -143,8 +119,24 @@ if st.button("Search", key="search_button"):
                     "fillOpacity": 0.1,
                 },
             ).add_to(m)
+
+            # Add facilities
+            if facilities.empty:
+                st.error("No facilities found within the state boundary.")
+            else:
+                st.write(f"Found {len(facilities)} facilities within {selected_state}.")
+                for _, row in facilities.iterrows():
+                    folium.Marker(
+                        location=[row["latitude"], row["longitude"]],
+                        popup=f"<b>{row['name']}</b><br>Address: {row['address']}",
+                        icon=folium.Icon(color="blue")
+                    ).add_to(m)
+
         except Exception as e:
-            st.error(f"Failed to add state boundary: {e}")
+            st.error(f"Failed to add state boundary or fetch facilities: {e}")
+
+    else:
+        st.error("Please select a state for boundary analysis.")
 
     st.session_state["map"] = m
 
@@ -156,12 +148,5 @@ else:
         location=[latitude, longitude],
         popup="Current Location",
         icon=folium.Icon(icon="info-sign", color="red")
-    ).add_to(default_map)
-    folium.Circle(
-        location=[latitude, longitude],
-        radius=radius,
-        color="blue",
-        fill=True,
-        fill_opacity=0.4
     ).add_to(default_map)
     st_folium(default_map, width=700, height=500)
