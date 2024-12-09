@@ -4,6 +4,7 @@ import requests
 from streamlit_folium import st_folium
 import folium
 import geopandas as gpd
+import json
 
 # Load API keys from Streamlit secrets
 GEOAPIFY_API_KEY = st.secrets["api_keys"]["geoapify"]
@@ -36,12 +37,12 @@ def fetch_healthcare_data_within_state_paginated(state_geojson, care_type):
     while True:
         params = {
             "categories": care_type,
-            "filter": f"boundary.geojson:{state_geojson}",
+            "filter": {"boundary": {"geojson": state_geojson}},
             "limit": limit,
             "offset": offset,
             "apiKey": GEOAPIFY_API_KEY,
         }
-        response = requests.get(url, params=params)
+        response = requests.post(url, json=params)
         if response.status_code == 200:
             data = response.json()
             features = data.get("features", [])
@@ -65,15 +66,29 @@ def fetch_healthcare_data_within_state_paginated(state_geojson, care_type):
 
 def simplify_geojson(state_geojson, tolerance=0.01):
     """Simplify GeoJSON geometry to reduce complexity."""
+    if isinstance(state_geojson, str):
+        state_geojson = json.loads(state_geojson)
     gdf = gpd.GeoDataFrame.from_features(state_geojson["features"])
     gdf["geometry"] = gdf["geometry"].simplify(tolerance)
-    return gdf.to_json()
+    return json.loads(gdf.to_json())
 
 def load_state_boundaries():
     """Load GeoJSON file with state boundaries."""
     url = "https://eric.clst.org/assets/wiki/uploads/Stuff/gz_2010_us_040_00_500k.json"
     gdf = gpd.read_file(url)
     return gdf
+
+def get_lat_lon_from_query(query):
+    url = f"https://maps.googleapis.com/maps/api/geocode/json"
+    params = {"address": query, "key": GOOGLE_API_KEY}
+    response = requests.get(url, params=params)
+    if response.status_code == 200:
+        data = response.json()
+        if data["results"]:
+            location = data["results"][0]["geometry"]["location"]
+            return location["lat"], location["lng"]
+    st.error("Location not found. Please try again.")
+    return None, None
 
 st.title("Healthcare Facility Locator")
 
@@ -106,7 +121,7 @@ if st.button("Search", key="search_button"):
 
     if selected_state and selected_state.strip():
         try:
-            state_geojson = state_boundaries[state_boundaries["NAME"] == selected_state].to_json()
+            state_geojson = state_boundaries[state_boundaries["NAME"] == selected_state].__geo_interface__
             state_geojson = simplify_geojson(state_geojson)  # Simplify the boundary
 
             # Fetch facilities within the state boundary using pagination
