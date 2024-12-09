@@ -3,6 +3,7 @@ import pandas as pd
 import requests
 from streamlit_folium import st_folium
 import folium
+import geopandas as gpd
 
 # Load API keys from Streamlit secrets
 GEOAPIFY_API_KEY = st.secrets["api_keys"]["geoapify"]
@@ -64,6 +65,12 @@ def get_lat_lon_from_query(query):
     st.error("Location not found. Please try again.")
     return None, None
 
+def load_state_boundaries():
+    """Load GeoJSON file with state boundaries."""
+    url = "https://eric.clst.org/assets/wiki/uploads/Stuff/gz_2010_us_040_00_500k.json"
+    gdf = gpd.read_file(url)
+    return gdf
+
 st.title("Healthcare Facility Locator")
 
 # Add legend above the map
@@ -75,6 +82,11 @@ st.markdown(f"""### Legend
 location_query = st.text_input("Search by Location:")
 radius = st.slider("Search Radius (meters):", min_value=500, max_value=200000, step=1000, value=20000)
 care_type = st.selectbox("Type of Care:", options=[""] + list(CARE_TYPES.keys()))
+
+# Add state selection for boundary overlay
+state_boundaries = load_state_boundaries()
+states = state_boundaries["NAME"].tolist()
+selected_state = st.selectbox("Select a State for Boundary Overlay:", options=[""] + states)
 
 latitude = st.number_input("Latitude", value=38.5449)
 longitude = st.number_input("Longitude", value=-121.7405)
@@ -116,6 +128,20 @@ if st.button("Search", key="search_button"):
             popup="Current Location",
             icon=folium.Icon(icon="info-sign", color="red")
         ).add_to(m)
+
+        # Add state boundary if selected
+        if selected_state:
+            state_geojson = state_boundaries[state_boundaries["NAME"] == selected_state].to_json()
+            folium.GeoJson(
+                data=state_geojson,
+                name="State Boundary",
+                style_function=lambda x: {
+                    "fillColor": "#428bca",
+                    "color": "#428bca",
+                    "weight": 2,
+                    "fillOpacity": 0.1,
+                },
+            ).add_to(m)
 
         st.session_state["map"] = m
 
