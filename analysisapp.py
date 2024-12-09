@@ -4,6 +4,8 @@ import requests
 from streamlit_folium import st_folium
 import folium
 import geopandas as gpd
+from shapely.geometry import box
+import time
 import json
 
 # Load API keys from Streamlit secrets
@@ -78,6 +80,29 @@ def load_state_boundaries():
     gdf = gpd.read_file(url)
     return gdf
 
+def split_state_into_grids(state_boundary, grid_size=1.0):
+    """Split the state boundary into smaller grids."""
+    minx, miny, maxx, maxy = state_boundary.total_bounds
+    grids = []
+    x_coords = list(range(int(minx), int(maxx), int(grid_size)))
+    y_coords = list(range(int(miny), int(maxy), int(grid_size)))
+    for x in x_coords:
+        for y in y_coords:
+            grid = box(x, y, x + grid_size, y + grid_size)
+            if grid.intersects(state_boundary.unary_union):
+                grids.append(grid)
+    return grids
+
+def fetch_facilities_in_grids_with_throttle(grids, care_type):
+    """Fetch facilities within grids, applying throttling to avoid API limits."""
+    facilities = []
+    for grid in grids:
+        geojson = gpd.GeoSeries([grid]).__geo_interface__
+        partial_facilities = fetch_healthcare_data_within_state_paginated(geojson, care_type)
+        facilities.append(partial_facilities)
+        time.sleep(1)  # Add a 1-second delay between requests
+    return pd.concat(facilities, ignore_index=True)
+
 def get_lat_lon_from_query(query):
     url = f"https://maps.googleapis.com/maps/api/geocode/json"
     params = {"address": query, "key": GOOGLE_API_KEY}
@@ -121,15 +146,13 @@ if st.button("Search", key="search_button"):
 
     if selected_state and selected_state.strip():
         try:
-            state_geojson = state_boundaries[state_boundaries["NAME"] == selected_state].__geo_interface__
-            state_geojson = simplify_geojson(state_geojson)  # Simplify the boundary
-
-            # Fetch facilities within the state boundary using pagination
-            facilities = fetch_healthcare_data_within_state_paginated(state_geojson, CARE_TYPES.get(care_type, "healthcare"))
+            state_boundary = state_boundaries[state_boundaries["NAME"] == selected_state].geometry
+            grids = split_state_into_grids(state_boundary, grid_size=1.0)
+            facilities = fetch_facilities_in_grids_with_throttle(grids, CARE_TYPES.get(care_type, "healthcare"))
 
             # Add state boundary
             folium.GeoJson(
-                data=state_geojson,
+                data=state_boundary.__geo_interface__,
                 name=f"Boundary: {selected_state}",
                 style_function=lambda x: {
                     "fillColor": "#428bca",
